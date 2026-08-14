@@ -11,8 +11,8 @@ if [ ! -f "$CSV_FILE" ]; then
 fi
 
 echo "📥 Importing $CSV_FILE..."
-curl -s -X POST "http://localhost:8080/api/transactions/import" \
+curl -s -X POST "http://localhost:7000/api/transactions/import" \
   -F "file=@${CSV_FILE}" | python3 -m json.tool
 
 echo ""
-echo "✅ Done. Refresh the app at http://localhost:8080"
+echo "✅ Done. Refresh the app at http://localhost:7000"
