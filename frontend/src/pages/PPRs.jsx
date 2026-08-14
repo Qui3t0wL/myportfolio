@@ -1,12 +1,13 @@
 import React from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { Card, Loading, ErrorMsg, SummaryDonut, SummaryRow, VarCell, GainsCell } from '../components/Shared'
-import { usePortfolio, fmt, colorClass } from '../hooks/usePortfolio'
+import { fmt, colorClass } from '../hooks/usePortfolio'
+import { usePortfolioContext } from '../PortfolioContext'
 
 const COLORS = ['#27ae60', '#2ecc71', '#1e8449', '#58d68d']
 
 export default function PPRs() {
-  const { data, loading, error } = usePortfolio()
+  const { data, loading, error } = usePortfolioContext()
   if (loading) return <Loading />
   if (error) return <ErrorMsg msg={error} />
 
