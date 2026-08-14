@@ -26,8 +26,6 @@ export function usePortfolio() {
 
   useEffect(() => {
     load()
-    const interval = setInterval(load, 5 * 60 * 1000) // refresh every 5 min
-    return () => clearInterval(interval)
   }, [load])
 
   const refreshPrices = async () => {
