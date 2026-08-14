@@ -1,12 +1,13 @@
 import React from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts'
 import { Card, Loading, ErrorMsg, SummaryDonut, SummaryRow, GainsCell } from '../components/Shared'
-import { usePortfolio, fmt, colorClass } from '../hooks/usePortfolio'
+import { fmt, colorClass } from '../hooks/usePortfolio'
+import { usePortfolioContext } from '../PortfolioContext'
 
 const COLORS = ['#5b55c9', '#7d79e0', '#3d3a8e']
 
 export default function P2P() {
-  const { data, loading, error } = usePortfolio()
+  const { data, loading, error } = usePortfolioContext()
   if (loading) return <Loading />
   if (error) return <ErrorMsg msg={error} />
 
