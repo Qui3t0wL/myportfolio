@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, Loading, ErrorMsg, SummaryDonut } from '../components/Shared'
-import { usePortfolio, useAccounts, fmt, colorClass } from '../hooks/usePortfolio'
+import { useAccounts, fmt, colorClass } from '../hooks/usePortfolio'
+import { usePortfolioContext } from '../PortfolioContext'
 
 const CAT_COLORS = {
   ETFs: '#c0392b', P2P: '#5b55c9', Crypto: '#2980b9',
@@ -62,7 +63,7 @@ function MiniDonut({ title, data, colors, centerVal, centerGains, centerPct }) {
 }
 
 export default function Overview() {
-  const { data, loading, error, refreshPrices, lastRefresh } = usePortfolio()
+  const { data, loading, error, refreshPrices, lastRefresh } = usePortfolioContext()
   const { accounts, update: updateAccount, create: createAccount, remove: removeAccount } = useAccounts()
   const [editAccount, setEditAccount] = useState(null)
   const [newAcc, setNewAcc] = useState({ nome: '', valor: '' })
