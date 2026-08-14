@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { Card, Loading, ErrorMsg, SummaryDonut, SummaryRow, GainsCell } from '../components/Shared'
-import { usePortfolio, fmt, colorClass } from '../hooks/usePortfolio'
+import { fmt, colorClass } from '../hooks/usePortfolio'
+import { usePortfolioContext } from '../PortfolioContext'
 
 const COLORS = ['#8e3466', '#c0528a', '#6c2450', '#d980af', '#a0406e']
 
@@ -56,7 +57,7 @@ function calcCAValue(subscricoes) {
 }
 
 export default function Aforro() {
-  const { data, loading, error } = usePortfolio()
+  const { data, loading, error } = usePortfolioContext()
   if (loading) return <Loading />
   if (error) return <ErrorMsg msg={error} />
 
