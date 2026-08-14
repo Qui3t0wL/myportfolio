@@ -29,7 +29,6 @@ CREATE TABLE IF NOT EXISTS price_cache (
 
 -- Seed default bank accounts
 INSERT INTO manual_accounts (nome, valor) VALUES
-    ('Bankinter', 0),
     ('Montepio', 0),
     ('Moey!', 0),
     ('Revolut', 0),
