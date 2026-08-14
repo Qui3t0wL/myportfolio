@@ -1,12 +1,13 @@
 import React from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { Card, Loading, ErrorMsg, SummaryDonut, VarCell, GainsCell, SummaryRow } from '../components/Shared'
-import { usePortfolio, fmt, colorClass } from '../hooks/usePortfolio'
+import { fmt, colorClass } from '../hooks/usePortfolio'
+import { usePortfolioContext } from '../PortfolioContext'
 
 const COLORS = ['#c0392b', '#e74c3c', '#922b21', '#7b241c', '#a93226']
 
 export default function ETFs() {
-  const { data, loading, error } = usePortfolio()
+  const { data, loading, error } = usePortfolioContext()
   if (loading) return <Loading />
   if (error) return <ErrorMsg msg={error} />
 
