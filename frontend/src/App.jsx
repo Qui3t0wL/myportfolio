@@ -1,5 +1,6 @@
 import React from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
+import { PortfolioProvider } from './PortfolioContext'
 import Overview from './pages/Overview'
 import ETFs from './pages/ETFs'
 import P2P from './pages/P2P'
@@ -20,6 +21,7 @@ const NAV = [
 
 export default function App() {
   return (
+    <PortfolioProvider>
     <BrowserRouter>
       <div style={{ display: 'flex', minHeight: '100vh' }}>
         {/* Sidebar */}
@@ -61,5 +63,6 @@ export default function App() {
         </main>
       </div>
     </BrowserRouter>
+    </PortfolioProvider>
   )
 }
