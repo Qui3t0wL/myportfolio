@@ -1,20 +1,26 @@
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://portfolio:portfolio123@localhost:5432/portfolio")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-PRICE_CACHE_TTL = 43200  # 12 horas — preços actualizados apenas ao carregar a página
+REDIS_URL    = os.getenv("REDIS_URL", "redis://localhost:6379")
+PRICE_CACHE_TTL = 43200  # 1 hora
 
-# Ticker category mapping
+# Tickers com preço via Yahoo Finance
 ETF_TICKERS = ["VWCE.DE", "EUNL.DE", "L0CK.DE", "QDVF.DE"]
-CRYPTO_TICKERS = ["BTC-EUR", "ETH-EUR"]
-PPR_TICKERS = ["Optimize PPR Ag S", "Optimize PPR Ag M", "Optimize PPR Ag V", "Stoik PPR"]
-P2P_TICKERS = ["Bondora", "ViaInvest", "PeerBerry"]
-CA_TICKERS = ["CA - Série E"]  # Certificados de Aforro
 
-# Investing.com fund IDs for scraping
-PPR_INVESTING_IDS = {
-    "Optimize PPR Ag S": "ptopzehm0017",
-    "Optimize PPR Ag M": "ptopzehm0017",
-    "Optimize PPR Ag V": "ptopzehm0017",
-    "Stoik PPR": "sgf-stoik-accoes-ppr-fp",
+# Tickers com preço via CoinGecko
+CRYPTO_TICKERS = ["BTC-EUR", "ETH-EUR"]
+
+# Tickers com preço via Yahoo (.F Frankfurt) ou investing.com scraping
+PPR_TICKERS = ["Optimize PPR Ag S", "Optimize PPR Ag M", "Optimize PPR Ag V", "Stoik PPR"]
+
+# Tickers que NÃO têm preço de mercado — valores introduzidos manualmente
+# O backend nunca tenta fazer fetch destes
+NO_PRICE_TICKERS = {
+    # P2P
+    "Bondora", "ViaInvest", "Viainvest", "PeerBerry",
+    # Certificados de Aforro
+    "CA - Série E", "CA - Serie E",
 }
+
+# Todos os tickers com preço automático (para validação rápida)
+ALL_PRICED_TICKERS = set(ETF_TICKERS) | set(CRYPTO_TICKERS) | set(PPR_TICKERS)
