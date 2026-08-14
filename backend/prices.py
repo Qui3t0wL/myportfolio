@@ -84,7 +84,7 @@ async def fetch_crypto_prices(tickers: list[str]) -> dict:
 
 PPR_URLS = {
     "Optimize PPR Ag S": "https://pt.investing.com/funds/ptopzehm0017",
-    "Optimize PPR Ag M": "https://pt.investing.com/funds/ptopzg690019",
+    "Optimize PPR Ag M": "https://pt.investing.com/funds/ptopzehm0017",
     "Optimize PPR Ag V": "https://pt.investing.com/funds/ptopzehm0017",
     "Stoik PPR": "https://pt.investing.com/funds/sgf-stoik-accoes-ppr-fp",
 }
