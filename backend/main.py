@@ -34,8 +34,10 @@ async def get_cached_portfolio(force: bool = False):
     rows = await db.fetch_all("SELECT * FROM transactions ORDER BY data ASC")
     transactions = [dict(r) for r in rows]
     accounts = [dict(a) for a in await db.fetch_all("SELECT * FROM manual_accounts")]
+    from config import NO_PRICE_TICKERS, ALL_PRICED_TICKERS
     tickers = list({t["ticker"] for t in transactions
-                    if t["accao"].lower() not in ("juro", "dividendo", "drip")})
+                    if t["ticker"] in ALL_PRICED_TICKERS})
+    logger.info(f"Tickers com preço automático: {tickers}")
     prices = await get_prices_for_tickers(tickers)
     result = compute_portfolio(transactions, prices, accounts)
 
