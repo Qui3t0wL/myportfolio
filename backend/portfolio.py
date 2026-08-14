@@ -10,7 +10,7 @@ from collections import defaultdict
 from datetime import date, datetime
 import math
 
-from config import ETF_TICKERS, CRYPTO_TICKERS, PPR_TICKERS, P2P_TICKERS, CA_TICKERS
+from config import ETF_TICKERS, CRYPTO_TICKERS, PPR_TICKERS, NO_PRICE_TICKERS
 
 def _ticker_category(ticker: str) -> str:
     if ticker in ETF_TICKERS or ticker.endswith(".DE") or ticker.endswith(".IE"):
