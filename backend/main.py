@@ -7,13 +7,40 @@ from typing import Optional
 import json
 import io
 import csv
+import logging
 
-from config import DATABASE_URL
-from prices import get_prices_for_tickers
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+from config import DATABASE_URL, PRICE_CACHE_TTL
+from prices import get_prices_for_tickers, get_redis
 from portfolio import compute_portfolio
 from models import ManualAccount, Transaction
 
 db = databases.Database(DATABASE_URL)
+
+PORTFOLIO_CACHE_KEY = "portfolio:result"
+
+async def get_cached_portfolio(force: bool = False):
+    r = await get_redis()
+    if not force:
+        cached = await r.get(PORTFOLIO_CACHE_KEY)
+        if cached:
+            return json.loads(cached)
+
+    rows = await db.fetch_all("SELECT * FROM transactions ORDER BY data ASC")
+    transactions = [dict(r) for r in rows]
+    accounts = [dict(a) for a in await db.fetch_all("SELECT * FROM manual_accounts")]
+    tickers = list({t["ticker"] for t in transactions
+                    if t["accao"].lower() not in ("juro", "dividendo", "drip")})
+    prices = await get_prices_for_tickers(tickers)
+    result = compute_portfolio(transactions, prices, accounts)
+
+    await r.setex(PORTFOLIO_CACHE_KEY, PRICE_CACHE_TTL, json.dumps(result, default=str))
+    return result
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -113,18 +140,7 @@ async def import_csv(file: UploadFile = File(...)):
 
 @app.get("/api/portfolio")
 async def get_portfolio():
-    rows = await db.fetch_all("SELECT * FROM transactions ORDER BY data ASC")
-    transactions = [dict(r) for r in rows]
-
-    accounts = await db.fetch_all("SELECT * FROM manual_accounts")
-    accounts = [dict(a) for a in accounts]
-
-    tickers = list({t["ticker"] for t in transactions
-                    if t["accao"] not in ("Juro", "Dividendo", "dividendo", "juro")})
-
-    prices = await get_prices_for_tickers(tickers)
-
-    return compute_portfolio(transactions, prices, accounts)
+    return await get_cached_portfolio()
 
 # ── Manual accounts ───────────────────────────────────────────────────────────
 
@@ -158,12 +174,10 @@ async def delete_account(nome: str):
 
 @app.post("/api/prices/refresh")
 async def refresh_prices():
-    rows = await db.fetch_all(
-        "SELECT DISTINCT ticker FROM transactions WHERE accao NOT IN ('Juro','Dividendo','dividendo','juro')"
-    )
-    tickers = [r["ticker"] for r in rows]
-    prices = await get_prices_for_tickers(tickers, force=True)
-    return {"refreshed": len(prices), "prices": prices}
+    r = await get_redis()
+    await r.delete(PORTFOLIO_CACHE_KEY)
+    result = await get_cached_portfolio(force=True)
+    return {"refreshed": True}
 
 @app.get("/api/prices")
 async def get_all_prices():
