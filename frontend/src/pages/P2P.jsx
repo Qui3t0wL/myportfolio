@@ -6,6 +6,22 @@ import { usePortfolioContext } from '../PortfolioContext'
 
 const COLORS = ['#5b55c9', '#7d79e0', '#3d3a8e']
 
+
+const BarTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 6, fontSize: 12 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, color: 'var(--text2)' }}>
+          <span>{p.name}</span>
+          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{fmt.eur(p.value)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function P2P() {
   const { data, loading, error } = usePortfolioContext()
   if (loading) return <Loading />
@@ -32,13 +48,11 @@ export default function P2P() {
                 <YAxis tick={{ fill: 'var(--text2)', fontSize: 11 }} axisLine={false} tickLine={false}
                   tickFormatter={v => fmt.eur(v, 0)} />
                 <ReferenceLine y={0} stroke="var(--border)" />
-                <Tooltip formatter={(v, n) => [fmt.eur(v), n === 'investimento' ? 'Investimento' : 'Juros']}
-                  contentStyle={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6 }}
-                  labelStyle={{ color: 'var(--text)', fontWeight: 600 }} />
-                <Bar dataKey="investimento" stackId="a" radius={[0,0,4,4]}>
+                <Tooltip content={<BarTooltip />} />
+                <Bar dataKey="investimento" name="Investimento" stackId="a" radius={[0,0,4,4]}>
                   {barData.map((d, i) => <Cell key={i} fill={d.color} />)}
                 </Bar>
-                <Bar dataKey="juros" stackId="a" radius={[4,4,0,0]}>
+                <Bar dataKey="juros" name="Juros" stackId="a" radius={[4,4,0,0]}>
                   {barData.map((d, i) => <Cell key={i} fill={d.color} fillOpacity={0.5} />)}
                 </Bar>
               </BarChart>
