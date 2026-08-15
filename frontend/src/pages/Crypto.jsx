@@ -18,12 +18,12 @@ export default function Crypto() {
   }))
 
   return (
-    <div style={{ padding: 20, maxWidth: 1400, margin: '0 auto' }}>
+    <div className="page" style={{ padding: 20, maxWidth: 1400, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 20 }}>Crypto</h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, marginBottom: 20 }}>
+      <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, marginBottom: 16 }}>
         <Card>
-          <div style={{ height: 280 }}>
+          <div className="chart-wrap" style={{ height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
                 <XAxis dataKey="name" tick={{ fill: 'var(--text2)', fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -57,11 +57,11 @@ export default function Crypto() {
       </div>
 
       <Card>
-        <table>
+        <div className="table-wrap"><table>
           <thead>
             <tr>
-              <th>Ticker</th><th>Unid.</th><th>PE</th><th>PE Total</th>
-              <th>Preço</th><th>Variação 24H</th><th>Valor €</th><th>Ganhos</th>
+              <th>Ticker</th><th>Unid.</th><th className="hide-mobile">PE</th><th className="hide-mobile">PE Total</th>
+              <th>Preço</th><th className="hide-mobile">Variação 24H</th><th>Valor €</th><th>Ganhos</th>
             </tr>
           </thead>
           <tbody>
@@ -78,7 +78,7 @@ export default function Crypto() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </Card>
     </div>
   )
