@@ -82,9 +82,25 @@ async def add_transaction(t: Transaction):
     row = await db.fetch_one(q, t.model_dump())
     return {"id": row["id"]}
 
+@app.put("/api/transactions/{tid}")
+async def update_transaction(tid: int, t: Transaction):
+    await db.execute(
+        """UPDATE transactions
+           SET data=:data, ticker=:ticker, accao=:accao, qtd=:qtd,
+               preco=:preco, comissao=:comissao, total=:total, notas=:notas
+           WHERE id=:id""",
+        {**t.model_dump(), "id": tid}
+    )
+    # Invalidate portfolio cache
+    r = await get_redis()
+    await r.delete(PORTFOLIO_CACHE_KEY)
+    return {"ok": True}
+
 @app.delete("/api/transactions/{tid}")
 async def delete_transaction(tid: int):
     await db.execute("DELETE FROM transactions WHERE id = :id", {"id": tid})
+    r = await get_redis()
+    await r.delete(PORTFOLIO_CACHE_KEY)
     return {"ok": True}
 
 @app.post("/api/transactions/import")
