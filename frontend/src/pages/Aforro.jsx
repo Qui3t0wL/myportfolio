@@ -80,12 +80,12 @@ export default function Aforro() {
   const donutAssets = rows.map((r, i) => ({ ticker: fmt.date(r.data), valor: r.valor }))
 
   return (
-    <div style={{ padding: 20, maxWidth: 1400, margin: '0 auto' }}>
+    <div className="page" style={{ padding: 20, maxWidth: 1400, margin: '0 auto' }}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 20 }}>Certificados de Aforro</h1>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, marginBottom: 20 }}>
+      <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 16, marginBottom: 16 }}>
         <Card>
-          <div style={{ height: 280 }}>
+          <div className="chart-wrap" style={{ height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
                 <XAxis dataKey="name" tick={{ fill: 'var(--text2)', fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -117,7 +117,7 @@ export default function Aforro() {
       </div>
 
       <Card>
-        <table>
+        <div className="table-wrap"><table>
           <thead>
             <tr>
               <th>Data Subscr.</th><th>Unid.</th><th>Valor. Un.</th>
@@ -140,7 +140,7 @@ export default function Aforro() {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </Card>
     </div>
   )
