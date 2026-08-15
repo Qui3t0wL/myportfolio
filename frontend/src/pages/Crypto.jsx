@@ -6,6 +6,22 @@ import { usePortfolioContext } from '../PortfolioContext'
 
 const COLORS = ['#1a4a7a', '#2980b9', '#5dade2']
 
+
+const BarTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', padding: '10px 14px', borderRadius: 6, fontSize: 12 }}>
+      <div style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, color: 'var(--text2)' }}>
+          <span>{p.name}</span>
+          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{fmt.eur(p.value)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function Crypto() {
   const { data, loading, error } = usePortfolioContext()
   if (loading) return <Loading />
@@ -28,13 +44,11 @@ export default function Crypto() {
               <BarChart data={barData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
                 <XAxis dataKey="name" tick={{ fill: 'var(--text2)', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: 'var(--text2)', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => fmt.eur(v, 0)} />
-                <Tooltip formatter={(v, n) => [fmt.eur(v), n === 'investido' ? 'Investido' : 'Ganhos']}
-                  contentStyle={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6 }}
-                  labelStyle={{ color: 'var(--text)', fontWeight: 600 }} />
-                <Bar dataKey="investido" stackId="a" radius={[0,0,4,4]}>
+                <Tooltip content={<BarTooltip />} />
+                <Bar dataKey="investido" name="Investido" stackId="a" radius={[0,0,4,4]}>
                   {barData.map((d, i) => <Cell key={i} fill={d.color} />)}
                 </Bar>
-                <Bar dataKey="ganhos" stackId="a" radius={[4,4,0,0]}>
+                <Bar dataKey="ganhos" name="Ganhos" stackId="a" radius={[4,4,0,0]}>
                   {barData.map((d, i) => <Cell key={i} fill={d.color} fillOpacity={0.45} />)}
                 </Bar>
               </BarChart>
