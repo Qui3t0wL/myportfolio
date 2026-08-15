@@ -201,3 +201,152 @@ async def refresh_prices():
 async def get_all_prices():
     rows = await db.fetch_all("SELECT * FROM price_cache ORDER BY ticker")
     return [dict(r) for r in rows]
+
+# ── Certificados de Aforro ────────────────────────────────────────────────────
+
+@app.get("/api/ca/taxas")
+async def get_ca_taxas():
+    rows = await db.fetch_all("SELECT * FROM ca_taxas ORDER BY ano DESC, mes DESC")
+    return [dict(r) for r in rows]
+
+@app.put("/api/ca/taxas/{ano}/{mes}")
+async def update_ca_taxa(ano: int, mes: int, body: dict):
+    await db.execute(
+        """INSERT INTO ca_taxas (ano, mes, taxa_anual, fonte)
+           VALUES (:ano, :mes, :taxa_anual, :fonte)
+           ON CONFLICT (ano, mes) DO UPDATE SET taxa_anual = :taxa_anual, fonte = :fonte""",
+        {"ano": ano, "mes": mes, "taxa_anual": body["taxa_anual"], "fonte": body.get("fonte", "manual")}
+    )
+    r = await get_redis()
+    await r.delete(PORTFOLIO_CACHE_KEY)
+    return {"ok": True}
+
+@app.post("/api/ca/taxas/fetch-pdf")
+async def fetch_ca_taxa_from_pdf():
+    """Tenta fazer download do PDF do IGCP e extrair a taxa do mês actual."""
+    import httpx, datetime, re
+    try:
+        import pdfplumber
+    except ImportError:
+        return {"error": "pdfplumber não instalado. Adiciona ao requirements.txt"}
+
+    today = datetime.date.today()
+    errors = []
+    for months_back in range(1, 4):
+        year = today.year
+        month = today.month - months_back
+        if month <= 0:
+            month += 12
+            year -= 1
+        url = f"https://www.igcp.pt/sites/default/files/{year}-{month:02d}/Taxa_Anual_E%2BPP.pdf"
+        try:
+            async with httpx.AsyncClient(timeout=15, headers={"User-Agent": "Mozilla/5.0"}) as client:
+                r = await client.get(url)
+                r.raise_for_status()
+            # Parse PDF
+            import io
+            with pdfplumber.open(io.BytesIO(r.content)) as pdf:
+                text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            logger.info(f"PDF CA obtido: {url}\n{text[:500]}")
+            # Extract rates - look for percentage patterns
+            rates = re.findall(r"(\d{1,2}[.,]\d{2,4})\s*%", text)
+            logger.info(f"Taxas encontradas no PDF: {rates}")
+            return {"url": url, "text_preview": text[:800], "rates_found": rates}
+        except Exception as e:
+            errors.append(f"{year}-{month:02d}: {e}")
+
+    return {"error": "Não foi possível obter o PDF", "details": errors}
+
+@app.get("/api/ca/calculo")
+async def calc_ca():
+    """Calcula o valor actual de todos os CA com base nas taxas históricas."""
+    from dateutil.relativedelta import relativedelta
+    import datetime
+
+    # Get all CA transactions
+    rows = await db.fetch_all(
+        "SELECT * FROM transactions WHERE ticker LIKE 'CA -%' AND accao = 'Compra' ORDER BY data"
+    )
+    # Get all historical rates
+    taxas_rows = await db.fetch_all("SELECT ano, mes, taxa_anual FROM ca_taxas ORDER BY ano, mes")
+    taxas = {(r["ano"], r["mes"]): float(r["taxa_anual"]) for r in taxas_rows}
+
+    hoje = datetime.date.today()
+    resultado = []
+    total_valor = 0
+    total_investido = 0
+
+    for row in rows:
+        sub_date = row["data"] if isinstance(row["data"], datetime.date) else datetime.date.fromisoformat(str(row["data"]))
+        unidades = int(float(row["qtd"]))
+
+        # Calculate trimester by trimester with actual historical rates
+        valor = float(unidades)
+        current = sub_date
+        trimestre = 0
+
+        while True:
+            # Next capitalization date (3 months after current)
+            prox = current + relativedelta(months=3)
+            if prox > hoje:
+                break
+            # Get rate for this month
+            taxa_anual = taxas.get((current.year, current.month))
+            if taxa_anual is None:
+                # Use nearest available rate
+                taxa_anual = taxas.get(
+                    max((k for k in taxas if k <= (current.year, current.month)), default=None)
+                ) or 2.112
+            taxa_trim = taxa_anual / 4 / 100
+            juros_brutos = valor * taxa_trim
+            juros_liquidos = juros_brutos * (1 - 0.28)  # retenção na fonte 28%
+            valor += juros_liquidos
+            trimestre += 1
+            current = prox
+
+        # Next capitalization
+        proxima_cap = sub_date + relativedelta(months=(trimestre + 1) * 3)
+        data_venc = sub_date + relativedelta(years=10)
+        ganhos_liquidos = valor - unidades
+        # Para mostrar o bruto: juros_liquidos = juros_brutos * 0.72, logo brutos = liquidos / 0.72
+        ganhos_brutos = ganhos_liquidos / 0.72
+        imposto_retido = ganhos_brutos * 0.28
+        ganhos_pct = (ganhos_liquidos / unidades * 100) if unidades > 0 else 0
+
+        # Current rate
+        taxa_atual = taxas.get((hoje.year, hoje.month)) or list(taxas.values())[-1]
+
+        resultado.append({
+            "ticker": row["ticker"],
+            "data_subscricao": sub_date.isoformat(),
+            "unidades": unidades,
+            "trimestres": trimestre,
+            "taxa_atual": taxa_atual,
+            "valorizacao_unitaria": round(valor / unidades, 5) if unidades else 1,
+            "valor_atual": round(valor, 2),
+            "ganhos": round(ganhos_liquidos, 2),
+            "ganhos_brutos": round(ganhos_brutos, 2),
+            "imposto_retido": round(imposto_retido, 2),
+            "ganhos_pct": round(ganhos_pct, 2),
+            "proxima_capitalizacao": proxima_cap.isoformat(),
+            "data_vencimento": data_venc.isoformat(),
+            "meses_para_vencimento": max(0, (data_venc - hoje).days // 30),
+        })
+        total_valor += valor
+        total_investido += unidades
+
+    total_ganhos_liq = total_valor - total_investido
+    total_ganhos_brutos = sum(r.get("ganhos_brutos", 0) for r in resultado)
+    total_imposto = sum(r.get("imposto_retido", 0) for r in resultado)
+    return {
+        "subscricoes": resultado,
+        "summary": {
+            "valor_atual": round(total_valor, 2),
+            "investido": round(total_investido, 2),
+            "ganhos": round(total_ganhos_liq, 2),
+            "ganhos_brutos": round(total_ganhos_brutos, 2),
+            "imposto_retido": round(total_imposto, 2),
+            "ganhos_pct": round((total_ganhos_liq / total_investido * 100) if total_investido else 0, 2),
+            "taxa_atual": taxas.get((hoje.year, hoje.month)) or list(taxas.values())[-1] if taxas else 0,
+        }
+    }
