@@ -270,7 +270,14 @@ export default function Aforro() {
             <SummaryRow label="Ganhos Brutos" value={fmt.eur(summary.ganhos_brutos)} className={colorClass(summary.ganhos_brutos)} />
             <SummaryRow label="Imposto retido (28%)" value={fmt.eur(summary.imposto_retido)} className="neg" />
             <SummaryRow label="Investido" value={fmt.eur(summary.investido)} />
-            <SummaryRow label="Taxa actual" value={`${summary.taxa_atual}%`} />
+            {summary.taxa_atual && <SummaryRow label="Taxa actual" value={`${summary.taxa_atual}%`} />}
+            {caData.source && (
+              <div style={{ marginTop: 8, padding: '4px 8px', borderRadius: 4, fontSize: 11,
+                background: caData.source === 'CTT' ? 'rgba(63,185,80,0.1)' : 'rgba(227,179,65,0.1)',
+                color: caData.source === 'CTT' ? 'var(--green)' : 'var(--yellow)' }}>
+                {caData.source === 'CTT' ? '✓ Valores via tabela CTT' : '⚠ Valores calculados (CTT indisponível)'}
+              </div>
+            )}
           </div>
         </Card>
       </div>
@@ -286,7 +293,7 @@ export default function Aforro() {
                 <th className="hide-mobile">Grupo</th>
                 <th className="hide-mobile">Trimestres</th>
                 <th className="hide-mobile">Taxa Actual</th>
-                <th>Val. Unitária</th>
+                <th>Val. Unit. CTT</th>
                 <th className="hide-mobile">Próx. Capital.</th>
                 <th>Valor €</th>
                 <th>Ganhos Líq.</th>
