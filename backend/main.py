@@ -206,20 +206,49 @@ async def get_all_prices():
 
 @app.get("/api/ca/taxas")
 async def get_ca_taxas():
-    rows = await db.fetch_all("SELECT * FROM ca_taxas ORDER BY ano DESC, mes DESC")
+    rows = await db.fetch_all(
+        "SELECT * FROM ca_taxas ORDER BY vigencia_ano DESC, vigencia_mes DESC, mes_subscricao"
+    )
     return [dict(r) for r in rows]
 
-@app.put("/api/ca/taxas/{ano}/{mes}")
-async def update_ca_taxa(ano: int, mes: int, body: dict):
+@app.put("/api/ca/taxas/{mes_sub}/{ano}/{mes}")
+async def update_ca_taxa(mes_sub: int, ano: int, mes: int, body: dict):
     await db.execute(
-        """INSERT INTO ca_taxas (ano, mes, taxa_anual, fonte)
-           VALUES (:ano, :mes, :taxa_anual, :fonte)
-           ON CONFLICT (ano, mes) DO UPDATE SET taxa_anual = :taxa_anual, fonte = :fonte""",
-        {"ano": ano, "mes": mes, "taxa_anual": body["taxa_anual"], "fonte": body.get("fonte", "manual")}
+        """INSERT INTO ca_taxas (mes_subscricao, vigencia_ano, vigencia_mes, taxa_anual, fonte)
+           VALUES (:mes_sub, :ano, :mes, :taxa_anual, :fonte)
+           ON CONFLICT (mes_subscricao, vigencia_ano, vigencia_mes)
+           DO UPDATE SET taxa_anual = :taxa_anual, fonte = :fonte""",
+        {"mes_sub": mes_sub, "ano": ano, "mes": mes,
+         "taxa_anual": body["taxa_anual"], "fonte": body.get("fonte", "manual")}
     )
     r = await get_redis()
     await r.delete(PORTFOLIO_CACHE_KEY)
     return {"ok": True}
+
+@app.post("/api/ca/taxas/bulk")
+async def bulk_update_ca_taxas(body: dict):
+    """Insere taxas de um PDF completo: {vig_ano, vig_mes, taxa_a, taxa_b, taxa_c, fonte}"""
+    vig_ano  = body["vig_ano"]
+    vig_mes  = body["vig_mes"]
+    taxa_a   = body["taxa_a"]   # grupos Jan,Abr,Jul,Out
+    taxa_b   = body["taxa_b"]   # grupos Fev,Mai,Ago,Nov
+    taxa_c   = body["taxa_c"]   # grupos Mar,Jun,Set,Dez
+    fonte    = body.get("fonte", "manual")
+    grupos = {1:[1,4,7,10], 2:[2,5,8,11], 3:[3,6,9,12]}
+    taxas_map = {1: taxa_a, 2: taxa_b, 3: taxa_c}
+    for grp, meses in grupos.items():
+        for ms in meses:
+            await db.execute(
+                """INSERT INTO ca_taxas (mes_subscricao, vigencia_ano, vigencia_mes, taxa_anual, fonte)
+                   VALUES (:ms, :ano, :mes, :taxa, :fonte)
+                   ON CONFLICT (mes_subscricao, vigencia_ano, vigencia_mes)
+                   DO UPDATE SET taxa_anual = :taxa, fonte = :fonte""",
+                {"ms": ms, "ano": vig_ano, "mes": vig_mes,
+                 "taxa": taxas_map[grp], "fonte": fonte}
+            )
+    r = await get_redis()
+    await r.delete(PORTFOLIO_CACHE_KEY)
+    return {"ok": True, "inserted": 12}
 
 @app.post("/api/ca/taxas/fetch-pdf")
 async def fetch_ca_taxa_from_pdf():
@@ -267,9 +296,17 @@ async def calc_ca():
     rows = await db.fetch_all(
         "SELECT * FROM transactions WHERE ticker LIKE 'CA -%' AND accao = 'Compra' ORDER BY data"
     )
-    # Get all historical rates
-    taxas_rows = await db.fetch_all("SELECT ano, mes, taxa_anual FROM ca_taxas ORDER BY ano, mes")
-    taxas = {(r["ano"], r["mes"]): float(r["taxa_anual"]) for r in taxas_rows}
+    # Get all historical rates indexed by (mes_subscricao, vigencia_ano, vigencia_mes)
+    taxas_rows = await db.fetch_all(
+        "SELECT mes_subscricao, vigencia_ano, vigencia_mes, taxa_anual FROM ca_taxas ORDER BY vigencia_ano, vigencia_mes"
+    )
+    # Build lookup: (mes_subscricao, vig_ano, vig_mes) -> taxa
+    taxas = {
+        (r["mes_subscricao"], r["vigencia_ano"], r["vigencia_mes"]): float(r["taxa_anual"])
+        for r in taxas_rows
+    }
+    # Also build sorted list of (mes_sub, vig_ano, vig_mes) for fallback lookup
+    taxas_keys = sorted(taxas.keys())
 
     hoje = datetime.date.today()
     resultado = []
@@ -279,6 +316,7 @@ async def calc_ca():
     for row in rows:
         sub_date = row["data"] if isinstance(row["data"], datetime.date) else datetime.date.fromisoformat(str(row["data"]))
         unidades = int(float(row["qtd"]))
+        mes_sub = sub_date.month  # key for rate lookup
 
         # Calculate trimester by trimester with actual historical rates
         valor = float(unidades)
@@ -286,20 +324,31 @@ async def calc_ca():
         trimestre = 0
 
         while True:
-            # Next capitalization date (3 months after current)
-            prox = current + relativedelta(months=3)
+            # Next capitalization: exactly 3 months after current
+            try:
+                prox = current + relativedelta(months=3)
+            except Exception:
+                prox = (current + relativedelta(months=4)).replace(day=1)
+
             if prox > hoje:
                 break
-            # Get rate for this month
-            taxa_anual = taxas.get((current.year, current.month))
+
+            # Rate for this trimester: keyed by (mes_subscricao, current_year, current_month)
+            taxa_anual = taxas.get((mes_sub, current.year, current.month))
             if taxa_anual is None:
-                # Use nearest available rate
-                taxa_anual = taxas.get(
-                    max((k for k in taxas if k <= (current.year, current.month)), default=None)
-                ) or 2.112
+                # Fall back to nearest previous rate for this mes_subscricao
+                prev_keys = [k for k in taxas_keys
+                             if k[0] == mes_sub and (k[1], k[2]) <= (current.year, current.month)]
+                if prev_keys:
+                    taxa_anual = taxas[prev_keys[-1]]
+                else:
+                    # Last resort: any rate for this mes_subscricao
+                    fallback = [v for k, v in taxas.items() if k[0] == mes_sub]
+                    taxa_anual = fallback[-1] if fallback else 2.112
+
             taxa_trim = taxa_anual / 4 / 100
             juros_brutos = valor * taxa_trim
-            juros_liquidos = juros_brutos * (1 - 0.28)  # retenção na fonte 28%
+            juros_liquidos = juros_brutos * (1 - 0.28)  # retenção na fonte 28% IRS
             valor += juros_liquidos
             trimestre += 1
             current = prox
