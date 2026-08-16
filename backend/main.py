@@ -24,14 +24,122 @@ db = databases.Database(DATABASE_URL)
 
 PORTFOLIO_CACHE_KEY = "portfolio:result"
 
-async def _calc_ca_internal() -> dict:
-    """Reutiliza a lógica de /api/ca/calculo para o portfolio overview."""
-    from dateutil.relativedelta import relativedelta
-    import datetime
+async def _scrape_ctt_reembolso() -> dict:
+    """
+    Scrapes the CTT Série E reembolso table.
+    Table structure:
+      - Columns: current month (mes_atual)
+      - Rows:    subscription month (mes_subscricao)
+      - Cell:    valor unitário de reembolso (already includes capitalisation + tax)
+    Returns: {(ano_sub, mes_sub): valor_unitario}
+    """
+    import httpx, re
+    from bs4 import BeautifulSoup
 
+    url = "https://appserver2.ctt.pt/feapl/app/open/certaforro/certificadosreembolsoList.jspx?request_locale=pt&serie_Nr=E"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Accept-Language": "pt-PT,pt;q=0.9",
+        "Referer": "https://appserver2.ctt.pt/",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+            r = await client.get(url, headers=headers)
+            r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "lxml")
+        result = {}
+
+        # Find the main table
+        table = soup.find("table")
+        if not table:
+            logger.warning("CTT: tabela não encontrada")
+            return result
+
+        rows = table.find_all("tr")
+        if not rows:
+            return result
+
+        # Parse header row to get current month columns
+        # Header format: "Ago/2026", "Set/2026", etc.
+        months_pt = {"jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,
+                     "jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12}
+
+        header_cols = []
+        header_row = rows[0]
+        for th in header_row.find_all(["th","td"]):
+            txt = th.get_text(strip=True).lower()
+            m = re.match(r"([a-z]+)[/\-](\d{4})", txt)
+            if m:
+                mes_num = months_pt.get(m.group(1)[:3])
+                ano_num = int(m.group(2))
+                if mes_num:
+                    header_cols.append((ano_num, mes_num))
+                else:
+                    header_cols.append(None)
+            else:
+                header_cols.append(None)
+
+        logger.info(f"CTT header cols: {header_cols}")
+
+        # Parse data rows — each row is a subscription month
+        for row in rows[1:]:
+            cells = row.find_all(["th","td"])
+            if not cells:
+                continue
+
+            # First cell is the subscription month label: "Set/2022", "Nov/2022", etc.
+            label = cells[0].get_text(strip=True).lower()
+            m = re.match(r"([a-z]+)[/\-](\d{4})", label)
+            if not m:
+                continue
+            mes_sub = months_pt.get(m.group(1)[:3])
+            ano_sub = int(m.group(2))
+            if not mes_sub:
+                continue
+
+            # Remaining cells are values for each column (current month)
+            for i, cell in enumerate(cells[1:], 0):
+                if i >= len(header_cols) or header_cols[i] is None:
+                    continue
+                col_ano, col_mes = header_cols[i]
+                val_txt = cell.get_text(strip=True).replace(",", ".").replace("\xa0","").strip()
+                try:
+                    val = float(val_txt)
+                    # Key: (ano_sub, mes_sub, col_ano, col_mes)
+                    result[(ano_sub, mes_sub, col_ano, col_mes)] = val
+                except ValueError:
+                    continue
+
+        logger.info(f"CTT: {len(result)} valores extraídos")
+        return result
+
+    except Exception as e:
+        logger.error(f"CTT scraping erro: {e}")
+        return {}
+
+
+async def _calc_ca_internal() -> dict:
+    """
+    Calculates CA values using CTT reembolso table (most accurate).
+    Falls back to manual trimester calculation if CTT is unavailable.
+    """
+    import datetime
+    from dateutil.relativedelta import relativedelta
+
+    hoje = datetime.date.today()
+
+    # Get CA transactions
     rows = await db.fetch_all(
         "SELECT * FROM transactions WHERE ticker LIKE 'CA -%' AND accao = 'Compra' ORDER BY data"
     )
+
+    # Try CTT table first
+    ctt_table = await _scrape_ctt_reembolso()
+    use_ctt = len(ctt_table) > 0
+
+    # Get historical rates for fallback
     taxas_rows = await db.fetch_all(
         "SELECT mes_subscricao, vigencia_ano, vigencia_mes, taxa_anual FROM ca_taxas ORDER BY vigencia_ano, vigencia_mes"
     )
@@ -40,71 +148,105 @@ async def _calc_ca_internal() -> dict:
         for r in taxas_rows
     }
     taxas_keys = sorted(taxas.keys())
-    hoje = datetime.date.today()
 
     resultado, total_valor, total_investido = [], 0, 0
 
     for row in rows:
         sub_date = row["data"] if isinstance(row["data"], datetime.date)                    else datetime.date.fromisoformat(str(row["data"]))
-        unidades = int(float(row["qtd"]))
-        mes_sub  = sub_date.month
-        valor    = float(unidades)
-        current  = sub_date
-        trimestre = 0
+        unidades  = int(float(row["qtd"]))
+        mes_sub   = sub_date.month
+        ano_sub   = sub_date.year
 
+        valor_unitario = None
+
+        if use_ctt:
+            # Look up current month in CTT table
+            valor_unitario = ctt_table.get((ano_sub, mes_sub, hoje.year, hoje.month))
+            # Try adjacent months if exact match not found
+            if valor_unitario is None:
+                for delta in [-1, 1, -2, 2]:
+                    alt = hoje + relativedelta(months=delta)
+                    valor_unitario = ctt_table.get((ano_sub, mes_sub, alt.year, alt.month))
+                    if valor_unitario:
+                        break
+
+        if valor_unitario:
+            # CTT value: valor_unitario is the reembolso value per unit subscribed
+            valor      = unidades * valor_unitario
+            ganhos_liq = valor - unidades
+            # CTT values already net of tax, so bruto = liq / 0.72
+            ganhos_brutos = ganhos_liq / 0.72
+            imposto       = ganhos_brutos * 0.28
+            source        = "CTT"
+        else:
+            # Fallback: manual trimester calculation
+            valor   = float(unidades)
+            current = sub_date
+            trimestre = 0
+            while True:
+                try:
+                    prox = current + relativedelta(months=3)
+                except Exception:
+                    prox = (current + relativedelta(months=4)).replace(day=1)
+                if prox > hoje:
+                    break
+                taxa_anual = taxas.get((mes_sub, current.year, current.month))
+                if taxa_anual is None:
+                    prev = [k for k in taxas_keys if k[0] == mes_sub and (k[1], k[2]) <= (current.year, current.month)]
+                    taxa_anual = taxas[prev[-1]] if prev else 2.112
+                juros_brutos = valor * taxa_anual / 4 / 100
+                valor       += juros_brutos * 0.72
+                trimestre   += 1
+                current      = prox
+            ganhos_liq    = valor - unidades
+            ganhos_brutos = ganhos_liq / 0.72
+            imposto       = ganhos_brutos * 0.28
+            valor_unitario = valor / unidades if unidades else 1
+            source        = "calc"
+
+        proxima_cap = sub_date + relativedelta(months=3)
+        current_tmp = sub_date
         while True:
-            try:
-                prox = current + relativedelta(months=3)
-            except Exception:
-                prox = (current + relativedelta(months=4)).replace(day=1)
-            if prox > hoje:
+            nxt = current_tmp + relativedelta(months=3)
+            if nxt > hoje:
+                proxima_cap = nxt
                 break
-            taxa_anual = taxas.get((mes_sub, current.year, current.month))
-            if taxa_anual is None:
-                prev = [k for k in taxas_keys if k[0] == mes_sub and (k[1], k[2]) <= (current.year, current.month)]
-                taxa_anual = taxas[prev[-1]] if prev else 2.112
-            taxa_trim     = taxa_anual / 4 / 100
-            juros_brutos  = valor * taxa_trim
-            valor        += juros_brutos * 0.72   # retencao 28%
-            trimestre    += 1
-            current       = prox
+            current_tmp = nxt
 
-        proxima_cap  = sub_date + relativedelta(months=(trimestre + 1) * 3)
-        data_venc    = sub_date + relativedelta(years=10)
-        ganhos_liq   = valor - unidades
-        ganhos_brutos = ganhos_liq / 0.72
-        imposto      = ganhos_brutos * 0.28
-        taxa_atual   = taxas.get((mes_sub, hoje.year, hoje.month))
+        data_venc = sub_date + relativedelta(years=10)
+
+        # Current rate from taxas table
+        taxa_atual = taxas.get((mes_sub, hoje.year, hoje.month))
         if not taxa_atual:
             prev = [k for k in taxas_keys if k[0] == mes_sub]
-            taxa_atual = taxas[prev[-1]] if prev else 2.112
+            taxa_atual = taxas[prev[-1]] if prev else None
 
         resultado.append({
-            "ticker": row["ticker"],
-            "data_subscricao": sub_date.isoformat(),
-            "unidades": unidades,
-            "trimestres": trimestre,
-            "taxa_atual": taxa_atual,
-            "valorizacao_unitaria": round(valor / unidades, 5) if unidades else 1,
-            "valor_atual": round(valor, 2),
-            "ganhos": round(ganhos_liq, 2),
-            "ganhos_brutos": round(ganhos_brutos, 2),
-            "imposto_retido": round(imposto, 2),
-            "ganhos_pct": round((ganhos_liq / unidades * 100) if unidades else 0, 2),
+            "ticker":              row["ticker"],
+            "data_subscricao":     sub_date.isoformat(),
+            "unidades":            unidades,
+            "taxa_atual":          taxa_atual,
+            "valorizacao_unitaria":round(valor_unitario, 5),
+            "valor_atual":         round(valor, 2),
+            "ganhos":              round(ganhos_liq, 2),
+            "ganhos_brutos":       round(ganhos_brutos, 2),
+            "imposto_retido":      round(imposto, 2),
+            "ganhos_pct":          round((ganhos_liq / unidades * 100) if unidades else 0, 2),
             "proxima_capitalizacao": proxima_cap.isoformat(),
-            "data_vencimento": data_venc.isoformat(),
+            "data_vencimento":     data_venc.isoformat(),
             "meses_para_vencimento": max(0, (data_venc - hoje).days // 30),
+            "source":              source,
         })
         total_valor     += valor
         total_investido += unidades
 
-    total_ganhos_liq   = total_valor - total_investido
+    total_ganhos_liq    = total_valor - total_investido
     total_ganhos_brutos = sum(r["ganhos_brutos"] for r in resultado)
     total_imposto       = sum(r["imposto_retido"] for r in resultado)
-    taxa_geral = taxas.get((9, hoje.year, hoje.month)) or 2.112  # fallback
 
     return {
         "subscricoes": resultado,
+        "source": "CTT" if use_ctt else "calc",
         "summary": {
             "valor_atual":    round(total_valor, 2),
             "investido":      round(total_investido, 2),
@@ -112,9 +254,10 @@ async def _calc_ca_internal() -> dict:
             "ganhos_brutos":  round(total_ganhos_brutos, 2),
             "imposto_retido": round(total_imposto, 2),
             "ganhos_pct":     round((total_ganhos_liq / total_investido * 100) if total_investido else 0, 2),
-            "taxa_atual":     taxa_geral,
+            "taxa_atual":     None,
         }
     }
+
 
 async def get_cached_portfolio(force: bool = False):
     r = await get_redis()
@@ -501,114 +644,7 @@ def _parse_igcp_pdf(text: str, today) -> dict:
 
 @app.get("/api/ca/calculo")
 async def calc_ca():
-    """Calcula o valor actual de todos os CA com base nas taxas históricas."""
-    from dateutil.relativedelta import relativedelta
-    import datetime
+    """Calcula o valor actual de todos os CA (via CTT com fallback para cálculo manual)."""
+    return await _calc_ca_internal()
 
-    # Get all CA transactions
-    rows = await db.fetch_all(
-        "SELECT * FROM transactions WHERE ticker LIKE 'CA -%' AND accao = 'Compra' ORDER BY data"
-    )
-    # Get all historical rates indexed by (mes_subscricao, vigencia_ano, vigencia_mes)
-    taxas_rows = await db.fetch_all(
-        "SELECT mes_subscricao, vigencia_ano, vigencia_mes, taxa_anual FROM ca_taxas ORDER BY vigencia_ano, vigencia_mes"
-    )
-    # Build lookup: (mes_subscricao, vig_ano, vig_mes) -> taxa
-    taxas = {
-        (r["mes_subscricao"], r["vigencia_ano"], r["vigencia_mes"]): float(r["taxa_anual"])
-        for r in taxas_rows
-    }
-    # Also build sorted list of (mes_sub, vig_ano, vig_mes) for fallback lookup
-    taxas_keys = sorted(taxas.keys())
 
-    hoje = datetime.date.today()
-    resultado = []
-    total_valor = 0
-    total_investido = 0
-
-    for row in rows:
-        sub_date = row["data"] if isinstance(row["data"], datetime.date) else datetime.date.fromisoformat(str(row["data"]))
-        unidades = int(float(row["qtd"]))
-        mes_sub = sub_date.month  # key for rate lookup
-
-        # Calculate trimester by trimester with actual historical rates
-        valor = float(unidades)
-        current = sub_date
-        trimestre = 0
-
-        while True:
-            # Next capitalization: exactly 3 months after current
-            try:
-                prox = current + relativedelta(months=3)
-            except Exception:
-                prox = (current + relativedelta(months=4)).replace(day=1)
-
-            if prox > hoje:
-                break
-
-            # Rate for this trimester: keyed by (mes_subscricao, current_year, current_month)
-            taxa_anual = taxas.get((mes_sub, current.year, current.month))
-            if taxa_anual is None:
-                # Fall back to nearest previous rate for this mes_subscricao
-                prev_keys = [k for k in taxas_keys
-                             if k[0] == mes_sub and (k[1], k[2]) <= (current.year, current.month)]
-                if prev_keys:
-                    taxa_anual = taxas[prev_keys[-1]]
-                else:
-                    # Last resort: any rate for this mes_subscricao
-                    fallback = [v for k, v in taxas.items() if k[0] == mes_sub]
-                    taxa_anual = fallback[-1] if fallback else 2.112
-
-            taxa_trim = taxa_anual / 4 / 100
-            juros_brutos = valor * taxa_trim
-            juros_liquidos = juros_brutos * (1 - 0.28)  # retenção na fonte 28% IRS
-            valor += juros_liquidos
-            trimestre += 1
-            current = prox
-
-        # Next capitalization
-        proxima_cap = sub_date + relativedelta(months=(trimestre + 1) * 3)
-        data_venc = sub_date + relativedelta(years=10)
-        ganhos_liquidos = valor - unidades
-        # Para mostrar o bruto: juros_liquidos = juros_brutos * 0.72, logo brutos = liquidos / 0.72
-        ganhos_brutos = ganhos_liquidos / 0.72
-        imposto_retido = ganhos_brutos * 0.28
-        ganhos_pct = (ganhos_liquidos / unidades * 100) if unidades > 0 else 0
-
-        # Current rate
-        taxa_atual = taxas.get((hoje.year, hoje.month)) or list(taxas.values())[-1]
-
-        resultado.append({
-            "ticker": row["ticker"],
-            "data_subscricao": sub_date.isoformat(),
-            "unidades": unidades,
-            "trimestres": trimestre,
-            "taxa_atual": taxa_atual,
-            "valorizacao_unitaria": round(valor / unidades, 5) if unidades else 1,
-            "valor_atual": round(valor, 2),
-            "ganhos": round(ganhos_liquidos, 2),
-            "ganhos_brutos": round(ganhos_brutos, 2),
-            "imposto_retido": round(imposto_retido, 2),
-            "ganhos_pct": round(ganhos_pct, 2),
-            "proxima_capitalizacao": proxima_cap.isoformat(),
-            "data_vencimento": data_venc.isoformat(),
-            "meses_para_vencimento": max(0, (data_venc - hoje).days // 30),
-        })
-        total_valor += valor
-        total_investido += unidades
-
-    total_ganhos_liq = total_valor - total_investido
-    total_ganhos_brutos = sum(r.get("ganhos_brutos", 0) for r in resultado)
-    total_imposto = sum(r.get("imposto_retido", 0) for r in resultado)
-    return {
-        "subscricoes": resultado,
-        "summary": {
-            "valor_atual": round(total_valor, 2),
-            "investido": round(total_investido, 2),
-            "ganhos": round(total_ganhos_liq, 2),
-            "ganhos_brutos": round(total_ganhos_brutos, 2),
-            "imposto_retido": round(total_imposto, 2),
-            "ganhos_pct": round((total_ganhos_liq / total_investido * 100) if total_investido else 0, 2),
-            "taxa_atual": taxas.get((hoje.year, hoje.month)) or list(taxas.values())[-1] if taxas else 0,
-        }
-    }
