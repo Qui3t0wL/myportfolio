@@ -43,6 +43,13 @@ async def _scrape_ctt_reembolso() -> dict:
         "Accept-Language": "pt-PT,pt;q=0.9",
         "Referer": "https://appserver2.ctt.pt/",
     }
+    # Full month names in PT (as used by CTT)
+    months_pt_full = {
+        "janeiro":1,"fevereiro":2,"março":3,"marco":3,"abril":4,
+        "maio":5,"junho":6,"julho":7,"agosto":8,"setembro":9,
+        "outubro":10,"novembro":11,"dezembro":12
+    }
+
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             r = await client.get(url, headers=headers)
@@ -51,8 +58,8 @@ async def _scrape_ctt_reembolso() -> dict:
         soup = BeautifulSoup(r.text, "lxml")
         result = {}
 
-        # Find the main table
-        table = soup.find("table")
+        # Table is inside .full-width-table-scroller
+        table = soup.select_one(".full-width-table-scroller table") or soup.find("table")
         if not table:
             logger.warning("CTT: tabela não encontrada")
             return result
@@ -61,58 +68,50 @@ async def _scrape_ctt_reembolso() -> dict:
         if not rows:
             return result
 
-        # Parse header row to get current month columns
-        # Header format: "Ago/2026", "Set/2026", etc.
-        months_pt = {"jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,
-                     "jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12}
-
+        # Header row: <th class="text-normal">maio 2026</th>
+        # Format: "<month_name_pt> <year>"  e.g. "maio 2026"
         header_cols = []
-        header_row = rows[0]
-        for th in header_row.find_all(["th","td"]):
-            txt = th.get_text(strip=True).lower()
-            m = re.match(r"([a-z]+)[/\-](\d{4})", txt)
+        for th in rows[0].find_all(["th","td"]):
+            txt = th.get_text(strip=True).lower().replace("\xa0", " ")
+            m = re.match(r"([a-záâãàéêíóôõú]+)\s+(\d{4})", txt)
             if m:
-                mes_num = months_pt.get(m.group(1)[:3])
+                mes_num = months_pt_full.get(m.group(1))
                 ano_num = int(m.group(2))
-                if mes_num:
-                    header_cols.append((ano_num, mes_num))
-                else:
-                    header_cols.append(None)
+                header_cols.append((ano_num, mes_num) if mes_num else None)
             else:
                 header_cols.append(None)
 
         logger.info(f"CTT header cols: {header_cols}")
 
-        # Parse data rows — each row is a subscription month
+        # Data rows: first cell = "setembro 2022", rest = values or "-"
         for row in rows[1:]:
             cells = row.find_all(["th","td"])
             if not cells:
                 continue
 
-            # First cell is the subscription month label: "Set/2022", "Nov/2022", etc.
-            label = cells[0].get_text(strip=True).lower()
-            m = re.match(r"([a-z]+)[/\-](\d{4})", label)
+            label = cells[0].get_text(strip=True).lower().replace("\xa0", " ")
+            m = re.match(r"([a-záâãàéêíóôõú]+)\s+(\d{4})", label)
             if not m:
                 continue
-            mes_sub = months_pt.get(m.group(1)[:3])
+            mes_sub = months_pt_full.get(m.group(1))
             ano_sub = int(m.group(2))
             if not mes_sub:
                 continue
 
-            # Remaining cells are values for each column (current month)
             for i, cell in enumerate(cells[1:], 0):
                 if i >= len(header_cols) or header_cols[i] is None:
                     continue
                 col_ano, col_mes = header_cols[i]
                 val_txt = cell.get_text(strip=True).replace(",", ".").replace("\xa0","").strip()
+                if val_txt in ("-", "", "—"):
+                    continue
                 try:
                     val = float(val_txt)
-                    # Key: (ano_sub, mes_sub, col_ano, col_mes)
                     result[(ano_sub, mes_sub, col_ano, col_mes)] = val
                 except ValueError:
                     continue
 
-        logger.info(f"CTT: {len(result)} valores extraídos")
+        logger.info(f"CTT: {len(result)} valores extraídos. Exemplo: { {k:v for k,v in list(result.items())[:3]} }")
         return result
 
     except Exception as e:
