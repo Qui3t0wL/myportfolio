@@ -120,7 +120,7 @@ tr:last-child td { border-bottom: none; }
     border-top-color: var(--blue);
   }
 
-  .bottom-nav .nav-icon { font-size: 18px; line-height: 1; }
+  .bottom-nav .material-symbols-rounded { font-size: 22px; line-height: 1; }
 
   .main-content {
     padding-bottom: var(--nav-height);
