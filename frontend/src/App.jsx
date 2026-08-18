@@ -45,6 +45,7 @@ function Sidebar() {
             borderLeft: isActive ? `3px solid ${n.color || 'var(--blue)'}` : '3px solid transparent',
             fontSize: 13, fontWeight: isActive ? 600 : 400,
             textDecoration: 'none', transition: 'all 0.15s',
+            fontVariationSettings: isActive ? "'FILL' 1" : "'FILL' 0"
           })}>
           <NavIcon name={n.icon} />
           {n.label}
