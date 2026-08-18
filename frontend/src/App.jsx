@@ -8,15 +8,17 @@ import Crypto from './pages/Crypto'
 import PPRs from './pages/PPRs'
 import Aforro from './pages/Aforro'
 import Historico from './pages/Historico'
+import Credito from './pages/Credito'
 
 const NAV = [
-  { to: '/',         label: 'Geral',    icon: '⬡', color: 'var(--blue)' },
-  { to: '/etfs',     label: 'ETFs',     icon: '📊', color: 'var(--etf)' },
-  { to: '/p2p',      label: 'P2P',      icon: '🔗', color: 'var(--p2p)' },
-  { to: '/crypto',   label: 'Crypto',   icon: '₿',  color: 'var(--crypto)' },
-  { to: '/pprs',     label: 'PPRs',     icon: '🛡',  color: 'var(--ppr)' },
-  { to: '/aforro',   label: 'Aforro',   icon: '🏦', color: 'var(--ca)' },
-  { to: '/historico',label: 'Histórico',icon: '📋', color: 'var(--text2)' },
+  { to: '/',          label: 'Geral',    icon: '⬡', color: 'var(--blue)' },
+  { to: '/etfs',      label: 'ETFs',     icon: '📊', color: 'var(--etf)' },
+  { to: '/p2p',       label: 'P2P',      icon: '🔗', color: 'var(--p2p)' },
+  { to: '/crypto',    label: 'Crypto',   icon: '₿',  color: 'var(--crypto)' },
+  { to: '/pprs',      label: 'PPRs',     icon: '🛡',  color: 'var(--ppr)' },
+  { to: '/aforro',    label: 'Aforro',   icon: '🏦', color: 'var(--ca)' },
+  { to: '/credito',   label: 'Crédito',  icon: '🏠', color: 'var(--credito)' },
+  { to: '/historico', label: 'Histórico',icon: '📋', color: 'var(--text2)' },
 ]
 
 function Sidebar() {
@@ -64,13 +66,14 @@ export default function App() {
           <Sidebar />
           <main className="main-content">
             <Routes>
-              <Route path="/"          element={<Overview />} />
-              <Route path="/etfs"      element={<ETFs />} />
-              <Route path="/p2p"       element={<P2P />} />
-              <Route path="/crypto"    element={<Crypto />} />
-              <Route path="/pprs"      element={<PPRs />} />
-              <Route path="/aforro"    element={<Aforro />} />
-              <Route path="/historico" element={<Historico />} />
+              <Route path="/"           element={<Overview />} />
+              <Route path="/etfs"       element={<ETFs />} />
+              <Route path="/p2p"        element={<P2P />} />
+              <Route path="/crypto"     element={<Crypto />} />
+              <Route path="/pprs"       element={<PPRs />} />
+              <Route path="/aforro"     element={<Aforro />} />
+              <Route path="/credito"    element={<Credito />} />
+              <Route path="/historico"  element={<Historico />} />
             </Routes>
           </main>
           <BottomNav />
