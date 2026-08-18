@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, Loading, ErrorMsg } from '../components/Shared'
 import { useAccounts, fmt, colorClass } from '../hooks/usePortfolio'
@@ -8,6 +8,7 @@ const CAT_COLORS = {
   ETFs: '#c0392b', P2P: '#5b55c9', Crypto: '#2980b9',
   PPRs: '#27ae60', Poupança: '#8e3466', Dinheiro: '#2d6a4f'
 }
+const C_CREDITO = '#e05c3a'
 
 function MiniDonut({ title, data, colors, centerVal, centerGains, centerPct }) {
   const CustomTooltip = ({ active, payload }) => {
@@ -40,8 +41,8 @@ function MiniDonut({ title, data, colors, centerVal, centerGains, centerPct }) {
         }}>
           <div style={{ fontWeight: 700, fontSize: 12 }}>{title}</div>
           <div style={{ fontSize: 12, fontWeight: 600 }}>{fmt.eur(centerVal)}</div>
-          <div className={colorClass(centerGains)} style={{ fontSize: 11 }}>{fmt.eur(centerGains)}</div>
-          <div className={colorClass(centerPct)} style={{ fontSize: 10 }}>{fmt.pct(centerPct)}</div>
+          {centerGains != null && <div className={colorClass(centerGains)} style={{ fontSize: 11 }}>{fmt.eur(centerGains)}</div>}
+          {centerPct != null && <div className={colorClass(centerPct)} style={{ fontSize: 10 }}>{fmt.pct(centerPct)}</div>}
         </div>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 2 }}>
@@ -60,11 +61,83 @@ function MiniDonut({ title, data, colors, centerVal, centerGains, centerPct }) {
   )
 }
 
+// Donut específico para o passivo (crédito)
+function PassivoDonut({ credito }) {
+  if (!credito || credito.total_divida === 0) {
+    return (
+      <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text2)' }}>
+        <div style={{ fontSize: 28, marginBottom: 8 }}>🏠</div>
+        <div style={{ fontSize: 12 }}>Sem créditos registados</div>
+      </div>
+    )
+  }
+
+  const data = credito.emprestimos.map((e, i) => ({
+    name: e.nome,
+    value: e.saldo_atual,
+    color: [C_CREDITO, '#c0392b', '#f39c12'][i % 3],
+  }))
+
+  const CustomTooltip = ({ active, payload }) => {
+    if (!active || !payload?.length) return null
+    const d = payload[0]
+    return (
+      <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', padding: '8px 12px', borderRadius: 6, fontSize: 12 }}>
+        <div style={{ fontWeight: 600 }}>{d.name}</div>
+        <div>{fmt.eur(d.value)}</div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <div style={{ position: 'relative', height: 180 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} cx="50%" cy="50%"
+              innerRadius={48} outerRadius={76} dataKey="value" paddingAngle={2}>
+              {data.map((d, i) => <Cell key={i} fill={d.color} stroke="none" />)}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+          </PieChart>
+        </ResponsiveContainer>
+        <div style={{
+          position: 'absolute', top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none', width: 110
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 12 }}>Passivo</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C_CREDITO }}>{fmt.eur(credito.total_divida)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 2 }}>
+            {fmt.eur(credito.total_prestacoes)}/mês
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 2 }}>
+        {data.map((d, i) => (
+          <span key={i} style={{ fontSize: 10, color: 'var(--text2)', display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: d.color, display: 'inline-block' }} />
+            {d.name}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function Overview() {
   const { data, loading, error, refreshPrices, lastRefresh } = usePortfolioContext()
   const { accounts, update: updateAccount, create: createAccount } = useAccounts()
   const [editAccount, setEditAccount] = useState(null)
   const [newAcc, setNewAcc] = useState({ nome: '', valor: '' })
+  const [credito, setCredito] = useState(null)
+
+  // Carrega resumo de crédito independentemente do portfolio
+  useEffect(() => {
+    fetch('/api/credito/resumo')
+      .then(r => r.json())
+      .then(setCredito)
+      .catch(() => setCredito({ total_divida: 0, total_prestacoes: 0, emprestimos: [] }))
+  }, [])
 
   if (loading) return <Loading />
   if (error) return <ErrorMsg msg={error} />
@@ -79,6 +152,10 @@ export default function Overview() {
     { name: 'Poupança', value: overview.aforro,  color: CAT_COLORS.Poupança },
     { name: 'Dinheiro', value: overview.dinheiro,color: CAT_COLORS.Dinheiro },
   ].filter(d => d.value > 0)
+
+  // Patrimônio líquido = activo total - passivo
+  const totalPassivo = credito?.total_divida || 0
+  const patrimonioLiquido = overview.valor_total - totalPassivo
 
   const CustomTooltip = ({ active, payload }) => {
     if (!active || !payload?.length) return null
@@ -107,13 +184,16 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* Main donut + side panels */}
-      <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 16, marginBottom: 16 }}>
+      {/* Activo + Passivo lado a lado */}
+      <div className="grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+
+        {/* Donut activo */}
         <Card>
-          <div style={{ position: 'relative', height: 320 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Activo</div>
+          <div style={{ position: 'relative', height: 300 }}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie data={mainData} cx="50%" cy="50%" innerRadius={100} outerRadius={148}
+                <Pie data={mainData} cx="50%" cy="50%" innerRadius={90} outerRadius={136}
                   dataKey="value" paddingAngle={2}>
                   {mainData.map((d, i) => <Cell key={i} fill={d.color} stroke="none" />)}
                 </Pie>
@@ -124,11 +204,12 @@ export default function Overview() {
               position: 'absolute', top: '50%', left: '50%',
               transform: 'translate(-50%, -50%)', textAlign: 'center', pointerEvents: 'none'
             }}>
-              <div style={{ fontSize: 22, fontWeight: 800 }}>{fmt.eur(overview.valor_total)}</div>
-              <div className={colorClass(overview.ganhos_total)} style={{ fontSize: 16, fontWeight: 700 }}>
+              <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 2 }}>Total Activo</div>
+              <div style={{ fontSize: 20, fontWeight: 800 }}>{fmt.eur(overview.valor_total)}</div>
+              <div className={colorClass(overview.ganhos_total)} style={{ fontSize: 14, fontWeight: 700 }}>
                 {fmt.eur(overview.ganhos_total)}
               </div>
-              <div className={colorClass(overview.ganhos_pct)} style={{ fontSize: 14, fontWeight: 600 }}>
+              <div className={colorClass(overview.ganhos_pct)} style={{ fontSize: 13, fontWeight: 600 }}>
                 {fmt.pct(overview.ganhos_pct)}
               </div>
             </div>
@@ -147,7 +228,34 @@ export default function Overview() {
           </div>
         </Card>
 
+        {/* Coluna direita: passivo + categorias + contas */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+          {/* Passivo donut */}
+          <Card style={{ background: '#180a06', border: `1px solid rgba(224,92,58,0.25)` }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Passivo</div>
+            <PassivoDonut credito={credito} />
+            {totalPassivo > 0 && (
+              <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--text2)' }}>Total activo</span>
+                  <span>{fmt.eur(overview.valor_total)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: 'var(--text2)' }}>Total passivo</span>
+                  <span style={{ color: C_CREDITO }}>− {fmt.eur(totalPassivo)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 700, borderTop: '1px solid var(--border)', paddingTop: 6, marginTop: 4 }}>
+                  <span>Património líquido</span>
+                  <span style={{ color: patrimonioLiquido >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {fmt.eur(patrimonioLiquido)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Por categoria */}
           <Card>
             <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8, color: 'var(--text2)' }}>POR CATEGORIA</div>
             {Object.entries(ganhos_por_categoria || {}).map(([cat, vals]) => (
@@ -161,6 +269,7 @@ export default function Overview() {
             ))}
           </Card>
 
+          {/* Contas bancárias */}
           <Card>
             <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 8, color: 'var(--text2)' }}>CONTAS BANCÁRIAS</div>
             {accounts.map(acc => (
@@ -192,7 +301,7 @@ export default function Overview() {
         </div>
       </div>
 
-      {/* Mini donuts */}
+      {/* Mini donuts dos investimentos */}
       <div className="grid-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
         <Card>
           <MiniDonut title="ETFs"
