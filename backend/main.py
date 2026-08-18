@@ -646,4 +646,341 @@ async def calc_ca():
     """Calcula o valor actual de todos os CA (via CTT com fallback para cálculo manual)."""
     return await _calc_ca_internal()
 
+# ── Crédito Habitação ─────────────────────────────────────────────────────────
+
+def _calcular_prestacao(capital: float, taxa_anual: float, n_prestacoes: int) -> float:
+    if taxa_anual == 0 or n_prestacoes == 0:
+        return round(capital / n_prestacoes, 2) if n_prestacoes else 0
+    taxa_mensal = taxa_anual / 100 / 12
+    p = capital * (taxa_mensal * (1 + taxa_mensal) ** n_prestacoes) / \
+        ((1 + taxa_mensal) ** n_prestacoes - 1)
+    return round(p, 2)
+
+
+def _gerar_plano(
+    capital_inicial: float,
+    taxa_anual_inicial: float,
+    n_meses: int,
+    data_inicio,
+    prestacao_override=None,
+    taxas_historico=None,
+    amortizacoes_extra=None,
+):
+    from dateutil.relativedelta import relativedelta
+    taxas_historico    = sorted(taxas_historico or [],    key=lambda x: x["data_vigor"])
+    amortizacoes_extra = sorted(amortizacoes_extra or [], key=lambda x: x["data"])
+
+    def taxa_em(d):
+        t = taxa_anual_inicial
+        for h in taxas_historico:
+            if h["data_vigor"] <= d:
+                t = h["taxa_total"]
+        return t
+
+    plano, saldo = [], capital_inicial
+    for i in range(n_meses):
+        if saldo <= 0.01:
+            break
+        data_prest   = data_inicio + relativedelta(months=i + 1)
+        taxa         = taxa_em(data_prest)
+        taxa_mensal  = taxa / 100 / 12
+        restantes    = n_meses - i
+
+        if prestacao_override:
+            prestacao = prestacao_override
+        else:
+            if taxa_mensal > 0:
+                prestacao = saldo * (taxa_mensal * (1 + taxa_mensal) ** restantes) / \
+                            ((1 + taxa_mensal) ** restantes - 1)
+            else:
+                prestacao = saldo / restantes
+            prestacao = round(prestacao, 2)
+
+        juros = round(saldo * taxa_mensal, 2)
+        amort = round(min(prestacao - juros, saldo), 2)
+        extra = sum(a["valor"] for a in amortizacoes_extra
+                    if a["data"].year == data_prest.year and a["data"].month == data_prest.month)
+
+        saldo_antes = saldo
+        saldo = round(max(0, saldo - amort - extra), 2)
+
+        plano.append({
+            "n": i + 1, "data": data_prest.isoformat(),
+            "saldo_inicio": round(saldo_antes, 2), "prestacao": round(prestacao, 2),
+            "juros": juros, "amortizacao": amort,
+            "amort_extra": round(extra, 2), "saldo_final": saldo,
+            "taxa_anual": round(taxa, 4),
+        })
+    return plano
+
+
+@app.get("/api/credito/emprestimos")
+async def get_emprestimos():
+    rows = await db.fetch_all("SELECT * FROM emprestimos ORDER BY data_inicio")
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/credito/emprestimos")
+async def create_emprestimo(body: dict):
+    import datetime
+    data_inicio = datetime.date.fromisoformat(body["data_inicio"])
+    taxa        = float(body["taxa_juros_anual"])
+    prazo       = int(body["prazo_meses"])
+    capital     = float(body["valor_inicial"])
+    prestacao   = _calcular_prestacao(capital, taxa, prazo)
+
+    row = await db.fetch_one(
+        """INSERT INTO emprestimos
+           (nome, banco, data_inicio, valor_inicial, prazo_meses,
+            taxa_juros_anual, spread, tipo_taxa, prestacao_mensal,
+            data_revisao_taxa, notas)
+           VALUES (:nome, :banco, :data_inicio, :capital, :prazo,
+                   :taxa, :spread, :tipo_taxa, :prestacao,
+                   :data_revisao, :notas)
+           RETURNING id""",
+        {
+            "nome": body.get("nome", "Crédito Habitação"),
+            "banco": body.get("banco", ""),
+            "data_inicio": data_inicio,
+            "capital": capital,
+            "prazo": prazo,
+            "taxa": taxa,
+            "spread": float(body.get("spread", 0)),
+            "tipo_taxa": body.get("tipo_taxa", "variavel"),
+            "prestacao": prestacao,
+            "data_revisao": datetime.date.fromisoformat(body["data_revisao_taxa"]) if body.get("data_revisao_taxa") else None,
+            "notas": body.get("notas", ""),
+        }
+    )
+    return {"id": row["id"], "prestacao_calculada": prestacao}
+
+
+@app.put("/api/credito/emprestimos/{eid}")
+async def update_emprestimo(eid: int, body: dict):
+    import datetime
+    taxa      = float(body["taxa_juros_anual"])
+    prazo     = int(body["prazo_meses"])
+    capital   = float(body["valor_inicial"])
+    prestacao = _calcular_prestacao(capital, taxa, prazo)
+    await db.execute(
+        """UPDATE emprestimos SET
+           nome=:nome, banco=:banco, data_inicio=:data_inicio,
+           valor_inicial=:capital, prazo_meses=:prazo,
+           taxa_juros_anual=:taxa, spread=:spread, tipo_taxa=:tipo_taxa,
+           prestacao_mensal=:prestacao, data_revisao_taxa=:data_revisao,
+           notas=:notas, updated_at=NOW()
+           WHERE id=:id""",
+        {
+            "id": eid,
+            "nome": body.get("nome", "Crédito Habitação"),
+            "banco": body.get("banco", ""),
+            "data_inicio": datetime.date.fromisoformat(body["data_inicio"]),
+            "capital": capital, "prazo": prazo, "taxa": taxa,
+            "spread": float(body.get("spread", 0)),
+            "tipo_taxa": body.get("tipo_taxa", "variavel"),
+            "prestacao": prestacao,
+            "data_revisao": datetime.date.fromisoformat(body["data_revisao_taxa"]) if body.get("data_revisao_taxa") else None,
+            "notas": body.get("notas", ""),
+        }
+    )
+    return {"ok": True, "prestacao_calculada": prestacao}
+
+
+@app.delete("/api/credito/emprestimos/{eid}")
+async def delete_emprestimo(eid: int):
+    await db.execute("DELETE FROM emprestimos WHERE id = :id", {"id": eid})
+    return {"ok": True}
+
+
+@app.get("/api/credito/emprestimos/{eid}/plano")
+async def get_plano_amortizacao(eid: int):
+    import datetime
+    row = await db.fetch_one("SELECT * FROM emprestimos WHERE id = :id", {"id": eid})
+    if not row:
+        from fastapi import HTTPException
+        raise HTTPException(404, "Empréstimo não encontrado")
+    emp = dict(row)
+
+    taxas_rows = await db.fetch_all(
+        "SELECT * FROM emprestimo_taxas WHERE emprestimo_id = :id ORDER BY data_vigor",
+        {"id": eid}
+    )
+    taxas_hist = [{"data_vigor": r["data_vigor"], "taxa_total": float(r["taxa_total"])}
+                  for r in taxas_rows]
+
+    amort_rows = await db.fetch_all(
+        "SELECT * FROM emprestimo_amortizacoes WHERE emprestimo_id = :id ORDER BY data",
+        {"id": eid}
+    )
+    amort_extra = [{"data": r["data"], "valor": float(r["valor"])} for r in amort_rows]
+
+    data_inicio = emp["data_inicio"] if isinstance(emp["data_inicio"], datetime.date) \
+                  else datetime.date.fromisoformat(str(emp["data_inicio"]))
+
+    plano = _gerar_plano(
+        capital_inicial       = float(emp["valor_inicial"]),
+        taxa_anual_inicial    = float(emp["taxa_juros_anual"]),
+        n_meses               = emp["prazo_meses"],
+        data_inicio           = data_inicio,
+        taxas_historico       = taxas_hist,
+        amortizacoes_extra    = amort_extra,
+    )
+
+    hoje = datetime.date.today()
+    passado  = [p for p in plano if datetime.date.fromisoformat(p["data"]) <= hoje]
+    futuro   = [p for p in plano if datetime.date.fromisoformat(p["data"]) >  hoje]
+
+    saldo_atual = passado[-1]["saldo_final"] if passado else float(emp["valor_inicial"])
+    total_pago  = sum(p["prestacao"] + p["amort_extra"] for p in passado)
+    juros_pagos = sum(p["juros"] for p in passado)
+    capital_amortizado = float(emp["valor_inicial"]) - saldo_atual
+    juros_futuros  = sum(p["juros"] for p in futuro)
+    prestacao_atual = passado[-1]["prestacao"] if passado else (futuro[0]["prestacao"] if futuro else 0)
+
+    return {
+        "emprestimo": emp,
+        "plano": plano,
+        "resumo": {
+            "saldo_atual":         round(saldo_atual, 2),
+            "valor_inicial":       float(emp["valor_inicial"]),
+            "capital_amortizado":  round(capital_amortizado, 2),
+            "pct_amortizado":      round(capital_amortizado / float(emp["valor_inicial"]) * 100, 1),
+            "total_pago":          round(total_pago, 2),
+            "juros_pagos":         round(juros_pagos, 2),
+            "juros_futuros":       round(juros_futuros, 2),
+            "prestacao_atual":     round(prestacao_atual, 2),
+            "prestacoes_pagas":    len(passado),
+            "prestacoes_restantes":len(futuro),
+            "data_fim":            plano[-1]["data"] if plano else None,
+        }
+    }
+
+
+@app.get("/api/credito/resumo")
+async def get_credito_resumo():
+    """Resumo de todos os empréstimos para o Overview."""
+    import datetime
+    rows = await db.fetch_all("SELECT * FROM emprestimos ORDER BY data_inicio")
+    if not rows:
+        return {"total_divida": 0, "total_prestacoes": 0, "emprestimos": []}
+
+    hoje   = datetime.date.today()
+    result = []
+    for row in rows:
+        emp = dict(row)
+        data_inicio = emp["data_inicio"] if isinstance(emp["data_inicio"], datetime.date) \
+                      else datetime.date.fromisoformat(str(emp["data_inicio"]))
+
+        taxas_rows = await db.fetch_all(
+            "SELECT * FROM emprestimo_taxas WHERE emprestimo_id = :id ORDER BY data_vigor",
+            {"id": emp["id"]}
+        )
+        taxas_hist = [{"data_vigor": r["data_vigor"], "taxa_total": float(r["taxa_total"])}
+                      for r in taxas_rows]
+        amort_rows = await db.fetch_all(
+            "SELECT * FROM emprestimo_amortizacoes WHERE emprestimo_id = :id ORDER BY data",
+            {"id": emp["id"]}
+        )
+        amort_extra = [{"data": r["data"], "valor": float(r["valor"])} for r in amort_rows]
+
+        plano = _gerar_plano(
+            capital_inicial    = float(emp["valor_inicial"]),
+            taxa_anual_inicial = float(emp["taxa_juros_anual"]),
+            n_meses            = emp["prazo_meses"],
+            data_inicio        = data_inicio,
+            taxas_historico    = taxas_hist,
+            amortizacoes_extra = amort_extra,
+        )
+        passado = [p for p in plano if datetime.date.fromisoformat(p["data"]) <= hoje]
+        futuro  = [p for p in plano if datetime.date.fromisoformat(p["data"]) >  hoje]
+
+        saldo = passado[-1]["saldo_final"] if passado else float(emp["valor_inicial"])
+        prestacao = passado[-1]["prestacao"] if passado else (futuro[0]["prestacao"] if futuro else 0)
+
+        result.append({
+            "id": emp["id"], "nome": emp["nome"], "banco": emp["banco"],
+            "saldo_atual": round(saldo, 2),
+            "valor_inicial": float(emp["valor_inicial"]),
+            "prestacao_mensal": round(prestacao, 2),
+            "taxa_juros_anual": float(emp["taxa_juros_anual"]),
+            "prestacoes_restantes": len(futuro),
+            "data_fim": plano[-1]["data"] if plano else None,
+        })
+
+    total_divida    = sum(e["saldo_atual"]      for e in result)
+    total_prestacoes = sum(e["prestacao_mensal"] for e in result)
+    return {"total_divida": round(total_divida, 2),
+            "total_prestacoes": round(total_prestacoes, 2),
+            "emprestimos": result}
+
+
+# ── Taxas históricas do empréstimo ────────────────────────────────────────────
+
+@app.get("/api/credito/emprestimos/{eid}/taxas")
+async def get_taxas(eid: int):
+    rows = await db.fetch_all(
+        "SELECT * FROM emprestimo_taxas WHERE emprestimo_id = :id ORDER BY data_vigor DESC",
+        {"id": eid}
+    )
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/credito/emprestimos/{eid}/taxas")
+async def add_taxa(eid: int, body: dict):
+    import datetime
+    await db.execute(
+        """INSERT INTO emprestimo_taxas (emprestimo_id, data_vigor, euribor, spread, taxa_total, fonte)
+           VALUES (:eid, :data_vigor, :euribor, :spread, :taxa_total, :fonte)
+           ON CONFLICT (emprestimo_id, data_vigor)
+           DO UPDATE SET euribor=:euribor, spread=:spread, taxa_total=:taxa_total, fonte=:fonte""",
+        {
+            "eid": eid,
+            "data_vigor": datetime.date.fromisoformat(body["data_vigor"]),
+            "euribor": float(body["euribor"]),
+            "spread": float(body["spread"]),
+            "taxa_total": float(body["euribor"]) + float(body["spread"]),
+            "fonte": body.get("fonte", "manual"),
+        }
+    )
+    return {"ok": True}
+
+
+@app.delete("/api/credito/taxas/{tid}")
+async def delete_taxa(tid: int):
+    await db.execute("DELETE FROM emprestimo_taxas WHERE id = :id", {"id": tid})
+    return {"ok": True}
+
+
+# ── Amortizações antecipadas ──────────────────────────────────────────────────
+
+@app.get("/api/credito/emprestimos/{eid}/amortizacoes")
+async def get_amortizacoes(eid: int):
+    rows = await db.fetch_all(
+        "SELECT * FROM emprestimo_amortizacoes WHERE emprestimo_id = :id ORDER BY data DESC",
+        {"id": eid}
+    )
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/credito/emprestimos/{eid}/amortizacoes")
+async def add_amortizacao(eid: int, body: dict):
+    import datetime
+    await db.execute(
+        """INSERT INTO emprestimo_amortizacoes (emprestimo_id, data, valor, tipo, notas)
+           VALUES (:eid, :data, :valor, :tipo, :notas)""",
+        {
+            "eid": eid,
+            "data": datetime.date.fromisoformat(body["data"]),
+            "valor": float(body["valor"]),
+            "tipo": body.get("tipo", "capital"),
+            "notas": body.get("notas", ""),
+        }
+    )
+    return {"ok": True}
+
+
+@app.delete("/api/credito/amortizacoes/{aid}")
+async def delete_amortizacao(aid: int):
+    await db.execute("DELETE FROM emprestimo_amortizacoes WHERE id = :id", {"id": aid})
+    return {"ok": True}
 
