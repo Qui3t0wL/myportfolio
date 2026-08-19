@@ -10,7 +10,15 @@ const ACCAO_COLORS = {
   SPLIT: '#8b949e', Ajustamento: '#8b949e', Levantamento: '#f85149',
 }
 
-function EditableCell({ value, type = 'text', options, onSave }) {
+// Calcula total = (qtd × preço) + comissão
+function calcTotal(qtd, preco, comissao) {
+  const q = parseFloat(qtd) || 0
+  const p = parseFloat(preco) || 0
+  const c = parseFloat(comissao) || 0
+  return Math.round((q * p + c) * 1e8) / 1e8
+}
+
+function EditableCell({ value, type = 'text', options, onSave, readOnly = false }) {
   const [editing, setEditing] = useState(false)
   const [val, setVal] = useState(value)
 
@@ -18,6 +26,12 @@ function EditableCell({ value, type = 'text', options, onSave }) {
     setEditing(false)
     if (String(val) !== String(value)) await onSave(val)
   }
+
+  if (readOnly) return (
+    <span style={{ color: 'var(--text2)', padding: '1px 2px' }}>
+      {value ?? '—'}
+    </span>
+  )
 
   if (!editing) return (
     <span
@@ -60,8 +74,8 @@ export default function Historico() {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [showForm, setShowForm] = useState(false)
-  const [newTx, setNewTx] = useState({ data: '', ticker: '', accao: 'Compra', qtd: '', preco: '', comissao: '0', total: '', notas: '' })
-  const [saving, setSaving] = useState(null) // id of row being saved
+  const [newTx, setNewTx] = useState({ data: '', ticker: '', accao: 'Compra', qtd: '', preco: '', comissao: '0', notas: '' })
+  const [saving, setSaving] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -72,11 +86,16 @@ export default function Historico() {
 
   useEffect(() => { load() }, [load])
 
+  // When editing a field that affects total, recalculate and save total too
   const updateField = async (id, field, value) => {
     setSaving(id)
     // Fetch current row
     const row = transactions.find(t => t.id === id)
     const updated = { ...row, [field]: value }
+
+    // Recalculate total whenever qty, price or commission changes
+    const newTotal = calcTotal(updated.qtd, updated.preco, updated.comissao)
+
     await fetch(`/api/transactions/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -87,7 +106,7 @@ export default function Historico() {
         qtd: parseFloat(updated.qtd),
         preco: parseFloat(updated.preco),
         comissao: parseFloat(updated.comissao || 0),
-        total: parseFloat(updated.total),
+        total: newTotal,
         notas: updated.notas || '',
       })
     })
@@ -115,6 +134,12 @@ export default function Historico() {
     await load()
   }
 
+  const handleNewTxChange = (field, value) => {
+    setNewTx(prev => ({ ...prev, [field]: value }))
+  }
+
+  const computedTotal = calcTotal(newTx.qtd, newTx.preco, newTx.comissao)
+
   const handleAddTx = async () => {
     await fetch('/api/transactions', {
       method: 'POST',
@@ -124,11 +149,11 @@ export default function Historico() {
         qtd: parseFloat(newTx.qtd),
         preco: parseFloat(newTx.preco),
         comissao: parseFloat(newTx.comissao || 0),
-        total: parseFloat(newTx.total),
+        total: computedTotal,
       })
     })
     setShowForm(false)
-    setNewTx({ data: '', ticker: '', accao: 'Compra', qtd: '', preco: '', comissao: '0', total: '', notas: '' })
+    setNewTx({ data: '', ticker: '', accao: 'Compra', qtd: '', preco: '', comissao: '0', notas: '' })
     await load()
   }
 
@@ -173,28 +198,41 @@ export default function Historico() {
           <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 13 }}>Nova transação</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 10, alignItems: 'end' }}>
             {[
-              { key: 'data', label: 'Data', type: 'date' },
-              { key: 'ticker', label: 'Ticker', type: 'text' },
-              { key: 'accao', label: 'Ação', type: 'select', options: ACCAO_OPTIONS },
-              { key: 'qtd', label: 'Qtd', type: 'number' },
-              { key: 'preco', label: 'Preço', type: 'number' },
-              { key: 'comissao', label: 'Comissão', type: 'number' },
-              { key: 'total', label: 'Total', type: 'number' },
-              { key: 'notas', label: 'Notas', type: 'text' },
+              { key: 'data',      label: 'Data',      type: 'date' },
+              { key: 'ticker',    label: 'Ticker',    type: 'text' },
+              { key: 'accao',     label: 'Ação',      type: 'select', options: ACCAO_OPTIONS },
+              { key: 'qtd',       label: 'Qtd',       type: 'number' },
+              { key: 'preco',     label: 'Preço',     type: 'number' },
+              { key: 'comissao',  label: 'Comissão',  type: 'number' },
+              { key: 'notas',     label: 'Notas',     type: 'text' },
             ].map(f => (
               <div key={f.key}>
                 <label style={{ fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>{f.label}</label>
                 {f.type === 'select' ? (
-                  <select value={newTx[f.key]} onChange={e => setNewTx(p => ({ ...p, [f.key]: e.target.value }))}
+                  <select value={newTx[f.key]} onChange={e => handleNewTxChange(f.key, e.target.value)}
                     style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text)', padding: '5px 6px', borderRadius: 4, fontSize: 12 }}>
                     {f.options.map(o => <option key={o}>{o}</option>)}
                   </select>
                 ) : (
-                  <input type={f.type} value={newTx[f.key]} onChange={e => setNewTx(p => ({ ...p, [f.key]: e.target.value }))}
+                  <input type={f.type} value={newTx[f.key]} onChange={e => handleNewTxChange(f.key, e.target.value)}
                     style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text)', padding: '5px 6px', borderRadius: 4, fontSize: 12 }} />
                 )}
               </div>
             ))}
+
+            {/* Total — read-only, calculated */}
+            <div>
+              <label style={{ fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
+                Total <span style={{ color: 'var(--text2)', fontStyle: 'italic' }}>(auto)</span>
+              </label>
+              <div style={{
+                width: '100%', background: 'var(--bg)', border: '1px solid var(--border)',
+                color: computedTotal > 0 ? 'var(--text)' : 'var(--text2)',
+                padding: '5px 6px', borderRadius: 4, fontSize: 12, fontWeight: 600,
+              }}>
+                {computedTotal > 0 ? fmt.eur(computedTotal) : '—'}
+              </div>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
             <button onClick={handleAddTx} style={{ background: 'var(--green)', color: '#000', border: 'none', padding: '7px 18px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>Guardar</button>
@@ -206,14 +244,16 @@ export default function Historico() {
       <Card>
         <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text2)' }}>
           {filtered.length} transações
-          <span style={{ marginLeft: 12, fontSize: 11 }}>— clica em qualquer célula para editar</span>
+          <span style={{ marginLeft: 12, fontSize: 11 }}>— clica em qualquer célula para editar · total calculado automaticamente</span>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table>
             <thead>
               <tr>
                 <th>Data</th><th>Ticker</th><th>Ação</th><th>Qtd</th>
-                <th>Preço</th><th>Comissão</th><th>Total</th><th>Notas</th>
+                <th>Preço</th><th>Comissão</th>
+                <th title="Calculado automaticamente: (Qtd × Preço) + Comissão">Total 🔒</th>
+                <th>Notas</th>
                 <th></th>
               </tr>
             </thead>
@@ -244,9 +284,13 @@ export default function Historico() {
                     <EditableCell value={t.comissao} type="number"
                       onSave={v => updateField(t.id, 'comissao', v)} />
                   </td>
-                  <td style={{ fontWeight: 600 }}>
-                    <EditableCell value={t.total} type="number"
-                      onSave={v => updateField(t.id, 'total', v)} />
+                  {/* Total: read-only, recalculated from current row values */}
+                  <td style={{ fontWeight: 600, color: 'var(--text2)' }}>
+                    <EditableCell
+                      value={fmt.eur(calcTotal(t.qtd, t.preco, t.comissao))}
+                      readOnly={true}
+                      onSave={() => {}}
+                    />
                   </td>
                   <td style={{ color: 'var(--text2)', fontSize: 11 }}>
                     <EditableCell value={t.notas || ''} type="text"
