@@ -357,7 +357,7 @@ export default function Credito() {
     <div className="page" style={{ padding: 20, maxWidth: 1400, margin: '0 auto' }}>
       {/* Header */}
       <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 700 }}>🏠 Crédito Habitação</h1>
+        <h1 style={{ fontSize: 20, fontWeight: 700 }}>Crédito Habitação</h1>
         <div className="page-header-actions" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {emprestimos.map(e => (
             <button key={e.id} onClick={() => setSelected(e.id)}
