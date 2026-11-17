@@ -85,10 +85,10 @@ export function useAccounts() {
 }
 
 // Formatting helpers
-export const fmt = {
+  export const fmt = {
   eur: (v, digits = 2) => {
     if (v == null) return '—'
-    return new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v)
+    return new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR', minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: 'always'}).format(v)
   },
   pct: (v) => {
     if (v == null) return '—'
@@ -96,7 +96,7 @@ export const fmt = {
   },
   num: (v, d = 4) => {
     if (v == null) return '—'
-    return Number(v).toLocaleString('pt-PT', { maximumFractionDigits: d })
+    return Number(v).toLocaleString('pt-PT', { maximumFractionDigits: d, useGrouping: 'always' })
   },
   date: (v) => {
     if (!v) return '—'
