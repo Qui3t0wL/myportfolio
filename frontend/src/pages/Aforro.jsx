@@ -306,7 +306,7 @@ export default function Aforro() {
               {subscricoes.map((s, i) => (
                 <tr key={i}>
                   <td>{fmt.date(s.data_subscricao)}</td>
-                  <td>{s.unidades.toLocaleString('pt-PT')}</td>
+                  <td>{fmt.num(s.unidades, 0)}</td>
                   <td className="hide-mobile" style={{ color: 'var(--text2)', fontSize: 11 }}>
                     {grupoLabel(new Date(s.data_subscricao).getMonth() + 1)}
                   </td>
