@@ -5,7 +5,7 @@ REDIS_URL    = os.getenv("REDIS_URL", "redis://localhost:6379")
 PRICE_CACHE_TTL = 43200  # 1 hora
 
 # Tickers com preço via Yahoo Finance
-ETF_TICKERS = ["VWCE.DE", "EUNL.DE", "L0CK.DE", "QDVF.DE"]
+ETF_TICKERS = ["VWCE.DE", "EUNL.DE", "L0CK.DE", "QDVF.DE", "VGLA.DE"]
 
 # Tickers com preço via CoinGecko
 CRYPTO_TICKERS = ["BTC-EUR", "ETH-EUR"]
